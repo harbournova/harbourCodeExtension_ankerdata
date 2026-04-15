@@ -89,6 +89,7 @@ class harbourDebugSession extends debugadapter.DebugSession {
                     }
                     if (line.startsWith("STOP")) {
                         this.sendEvent(new debugadapter.StoppedEvent(line.substring(5), 1));
+                        this.sendEvent({ event: "invalidated", body: { areas: ["variables", "stacks"], threadId: 1 }, seq: 0, type: "event" });
                         continue;
                     }
                     if (line.startsWith("STACK")) {
@@ -159,6 +160,7 @@ class harbourDebugSession extends debugadapter.DebugSession {
         response.body.supportsLogPoint = true;
         response.body.supportsCompletionsRequest = true;
         response.body.supportsTerminateRequest = true;
+        response.body.supportsInvalidatedEvent = true;
         response.body.exceptionBreakpointFilters = [
             {
                 label: localize('harbour.dbgError.all'),
@@ -991,6 +993,7 @@ class harbourDebugSession extends debugadapter.DebugSession {
             }
             const expLine = "EXP:" + frame + ":" + resp.body.result.replace(/:/g, ";") + ":";
             resp.body.name = resp.body.result;
+            resp.body.evaluateName = resp.body.result;
             if (type == "E") {
                 resp.success = false;
                 resp.message = result;
