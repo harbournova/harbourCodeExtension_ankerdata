@@ -6,9 +6,7 @@ const Uri = require("vscode-uri").URI;
 const trueCase = require("true-case-path")
 const server_textdocument = require("vscode-languageserver-textdocument");
 
-var connection = server.createConnection(
-    new server.IPCMessageReader(process),
-    new server.IPCMessageWriter(process));
+var connection = server.createConnection(process.stdin, process.stdout);
 
 
 /** @type {Array<string>} */
