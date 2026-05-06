@@ -6,7 +6,13 @@ const Uri = require("vscode-uri").URI;
 const trueCase = require("true-case-path")
 const server_textdocument = require("vscode-languageserver-textdocument");
 
-var connection = server.createConnection(process.stdin, process.stdout);
+// vscode-languageclient (TransportKind.ipc) forks the server with a Node IPC
+// channel; Neovim and other LSP clients spawn it over stdio.
+var connection = typeof process.send === "function"
+    ? server.createConnection(
+        new server.IPCMessageReader(process),
+        new server.IPCMessageWriter(process))
+    : server.createConnection(process.stdin, process.stdout);
 
 
 /** @type {Array<string>} */
