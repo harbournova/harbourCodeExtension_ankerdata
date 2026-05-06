@@ -1,0 +1,21 @@
+{
+  "name": "harbour-code-extension",
+  "private": true,
+  "description": "Harbour and xHarbour language support for Visual Studio Code (workspace root).",
+  "repository": {
+    "url": "https://github.com/ankerdata/harbourCodeExtension"
+  },
+  "engines": {
+    "node": ">=16.7"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install-subpackages.js",
+    "install:client": "npm --prefix client install",
+    "install:server": "npm --prefix server install",
+    "build": "node scripts/build.js",
+    "build:dev": "node scripts/build.js --dev",
+    "build:server": "node scripts/build.js --server-only",
+    "build:client": "node scripts/build.js --client-only",
+    "package": "cd client && npx --yes @vscode/vsce package --out ../harbour-extension.vsix"
+  }
+}

@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -20,30 +20,8 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install server dependencies
-        run: |
-          cd server
-          npm install
-
-      - name: Build server
-        run: |
-          cd server
-          npm run webpack2
-
-      - name: Install client dependencies
-        run: |
-          cd client
-          npm install
-
-      - name: Build client
-        run: |
-          cd client
-          npm run webpack2
-
-      - name: Run prepublish script
-        run: |
-          cd client
-          npm run vscode:prepublish
+      - name: Install dependencies (root + subpackages via postinstall)
+        run: npm install
 
       - name: Install vsce
         run: npm install -g @vscode/vsce
@@ -68,9 +46,9 @@ jobs:
           name: Release ${{ steps.get_version.outputs.tag }}
           body: |
             ## Harbour Code Extension ${{ steps.get_version.outputs.version }}
-            
+
             Automated release from master branch.
-            
+
             ### Installation
             Download the `.vsix` file and install it using:
             ```
@@ -81,4 +59,3 @@ jobs:
           allowUpdates: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

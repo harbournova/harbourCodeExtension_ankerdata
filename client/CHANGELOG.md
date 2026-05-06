@@ -1,6 +1,17 @@
 # Change Log
 All notable changes to the "Harbour and xHarbour" extension will be documented in this file.
 
+# 1.0.8
+ - **Server** auto-detect LSP transport (IPC for VSCode, stdio for Neovim and other clients) so the same server binary works in both editors
+ - **Server** parse the workspace on `initialized` when no `didChangeConfiguration` arrives, so go-to-definition works under clients that do not push configuration (e.g. Neovim)
+ - **Server** richer hover for functions, procedures, methods, classes, locals and standard-library symbols, including parameter lists and `$DOC$` documentation
+ - **Server** `onDidChangeConfiguration` is now defensive against partial settings payloads
+ - **Server** `SemanticTokensRequest` returns the spec-compliant `{ data: [] }` instead of `[]` for unknown documents
+ - **Debugger** support `invalidatedEvent` from the runtime
+ - **Debugger** fix nested-array evaluation in watches and locals
+ - **Debugger** fix string evaluation when the value contains a colon
+ - **Debugger** fix locals/watch errors when values are nil
+
 # 1.0.7
  - **Server** fixed completion on trigger character
  - **Debugger** fixed start on non-windows system [#87](https://github.com/APerricone/harbourCodeExtension/issues/86)

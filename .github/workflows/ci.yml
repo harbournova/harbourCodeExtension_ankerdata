@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches-ignore:
+      - master
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node-version: ['20']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install dependencies (root + subpackages via postinstall)
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Install vsce
+        run: npm install -g @vscode/vsce
+
+      - name: Package VSIX
+        run: |
+          cd client
+          vsce package --out ../harbour-extension-${{ matrix.os }}.vsix
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: harbour-extension-${{ matrix.os }}
+          path: harbour-extension-${{ matrix.os }}.vsix
+          if-no-files-found: error
