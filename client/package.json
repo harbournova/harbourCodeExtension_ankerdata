@@ -39,7 +39,8 @@
         "build:dev": "node build.js --dev",
         "watch": "node build.js --watch",
         "prelaunch": "node build.js --dev",
-        "webpack2": "node build.js"
+        "webpack2": "node build.js",
+        "package": "vsce package --out ../harbour-extension.vsix"
     },
     "contributes": {
         "problemMatchers": [
@@ -558,6 +559,7 @@
         ]
     },
     "devDependencies": {
+        "@vscode/vsce": "^3.9.1",
         "esbuild": "^0.24.0"
     }
 }

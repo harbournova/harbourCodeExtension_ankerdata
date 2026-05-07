@@ -23,13 +23,15 @@
   "devDependencies": {
     "@types/node": "^18.8.4",
     "esbuild": "^0.24.0",
-    "npm-check-updates": "^16.3.11"
+    "npm-check-updates": "^16.3.11",
+    "typescript": "^6.0.3"
   },
   "scripts": {
     "build": "node build.js",
     "build:dev": "node build.js --dev",
     "watch": "node build.js --watch",
     "prelaunch": "node build.js --dev",
-    "webpack2": "node build.js"
+    "webpack2": "node build.js",
+    "typecheck": "tsc --noEmit"
   }
 }

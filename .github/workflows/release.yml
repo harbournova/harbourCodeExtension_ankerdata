@@ -23,13 +23,9 @@ jobs:
       - name: Install dependencies (root + subpackages via postinstall)
         run: npm install
 
-      - name: Install vsce
-        run: npm install -g @vscode/vsce
-
       - name: Package extension
-        run: |
-          cd client
-          vsce package --out ../harbour-extension.vsix
+        run: npx vsce package --out ../harbour-extension.vsix
+        working-directory: client
 
       - name: Get version from package.json
         id: get_version

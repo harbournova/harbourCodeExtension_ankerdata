@@ -27,7 +27,7 @@ const copyHbDocsPlugin = {
 function makeOptions(dev) {
   /** @type {import('esbuild').BuildOptions} */
   return {
-    entryPoints: [path.join(__dirname, 'src', 'main.js')],
+    entryPoints: [path.join(__dirname, 'src', 'main.ts')],
     outfile: path.join(outdir, 'hb_server.js'),
     bundle: true,
     platform: 'node',
