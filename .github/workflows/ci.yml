@@ -27,16 +27,15 @@ jobs:
       - name: Install dependencies (root + subpackages via postinstall)
         run: npm install
 
+      - name: Type-check server
+        run: npm --prefix server run typecheck
+
       - name: Build
         run: npm run build
 
-      - name: Install vsce
-        run: npm install -g @vscode/vsce
-
       - name: Package VSIX
-        run: |
-          cd client
-          vsce package --out ../harbour-extension-${{ matrix.os }}.vsix
+        run: npx vsce package --out ../harbour-extension-${{ matrix.os }}.vsix
+        working-directory: client
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
