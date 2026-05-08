@@ -38,3 +38,5 @@ trash
 *.cpuprofile
 
 appunti_formatter
+
+.claude
