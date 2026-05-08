@@ -5,6 +5,7 @@ import * as path from "path";
 import { URI as Uri } from "vscode-uri";
 import * as trueCase from "true-case-path";
 import * as server_textdocument from "vscode-languageserver-textdocument";
+import { isHarbourGeneratedCFile } from "./workspaceScan";
 
 interface FieldInfo {
     name: string;
@@ -233,10 +234,18 @@ function parseWorkspace(): void {
                     appendFile(dest.completePath, false);
                 }
             }
-            // 2nd cycle: parse all c file
+            // 2nd cycle: parse companion C/H files, but skip the .c
+            // output emitted by the Harbour→C compiler. Generated
+            // artefacts contain `HB_FUNC( NAME )` p-code shims that
+            // duplicate the .prg PROCEDURE/FUNCTION definitions and
+            // would otherwise shadow them in go-to-definition / hover.
+            // Hand-written companion C and `#pragma BEGINDUMP` blocks
+            // remain indexable.
             for (let i = 0; i < files.length; i++) {
                 const dest = files[i];
                 if (dest.cFile && (prgFiles!.findIndex((v) => v.indexOf(dest.pathParse.name) >= 0) >= 0)) {
+                    if (isHarbourGeneratedCFile(dest.completePath))
+                        continue;
                     appendFile(dest.completePath, true);
                 }
             }
@@ -942,6 +951,11 @@ documents.onDidChangeContent((e) => {
     const ext = path.extname(uri.fsPath).toLowerCase();
     const cMode = (ext.startsWith(".c") && ext !== ".ch");
     if (ext === ".prg" || ext === ".ch" || cMode) {
+        // Don't index Harbour→C compiler output even if the user
+        // opened it explicitly: its `HB_FUNC( NAME )` shims would
+        // shadow the .prg PROCEDURE/FUNCTION definitions in
+        // go-to-definition and hover.
+        if (cMode && isHarbourGeneratedCFile(uri.fsPath)) return;
         const docUri = canonicalUri(e.document.uri);
         let doGroups = false;
         if (docUri in files) doGroups = files[docUri].doGroups;
