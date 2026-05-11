@@ -40,6 +40,7 @@
         "watch": "node build.js --watch",
         "prelaunch": "node build.js --dev",
         "webpack2": "node build.js",
+        "typecheck": "tsc --noEmit",
         "package": "vsce package --out ../harbour-extension.vsix"
     },
     "contributes": {
@@ -559,7 +560,10 @@
         ]
     },
     "devDependencies": {
+        "@types/node": "^18.8.4",
+        "@types/vscode": "^1.40.0",
         "@vscode/vsce": "^3.9.1",
-        "esbuild": "^0.24.0"
+        "esbuild": "^0.24.0",
+        "typescript": "^6.0.3"
     }
 }
