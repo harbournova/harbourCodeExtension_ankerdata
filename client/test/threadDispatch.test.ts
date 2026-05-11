@@ -1,5 +1,23 @@
+import { EventEmitter } from "events";
 import { DebugProtocol } from "@vscode/debugprotocol";
 import { harbourDebugSession, HBVar, ThreadState, MAIN_THREAD_ID } from "../src/debugger";
+
+/**
+ * Minimal net.Socket-shaped stub for tests. Sockets in node are EventEmitters
+ * with `write`/`end`/`removeAllListeners`; that's the entire surface our
+ * acceptThreadSocket code touches.
+ */
+class FakeSocket extends EventEmitter {
+    written: string[] = [];
+    destroyed = false;
+    write(data: string | Buffer): boolean {
+        this.written.push(typeof data === "string" ? data : data.toString());
+        return true;
+    }
+    end(): void {
+        this.destroyed = true;
+    }
+}
 
 type CapturedEvent = DebugProtocol.Event;
 type CapturedResponse = DebugProtocol.Response;
@@ -185,6 +203,155 @@ describe("debugger thread dispatch — single-thread baseline", () => {
         expect(stops).toHaveLength(2);
         expect(stops[0].body.threadId).toBe(1);
         expect(stops[1].body.threadId).toBe(1);
+    });
+});
+
+describe("ThreadState routing — phase 2 (multi-socket)", () => {
+    it("processInput(buff, thread) tags events with the provided thread.id, then restores currentThread", () => {
+        const { session, events } = makeSession();
+        const secondary = new ThreadState(7);
+        session.threads.set(7, secondary);
+
+        session.processInput("STOP:break\r\n", secondary);
+
+        const stopped = findEvent<DebugProtocol.StoppedEvent>(events, "stopped");
+        expect(stopped).toBeDefined();
+        expect(stopped!.body.threadId).toBe(7);
+
+        const invalidated = findEvent<DebugProtocol.InvalidatedEvent>(events, "invalidated");
+        expect((invalidated!.body as { threadId?: number }).threadId).toBe(7);
+
+        // currentThread is restored to the previous value after the call so DAP
+        // request handlers (which still default to mainThread) don't see leakage.
+        expect(session.currentThread).toBe(session.mainThread);
+    });
+
+    it("state writes during processInput land on the target thread, not the main thread", () => {
+        const { session } = makeSession();
+        const secondary = new ThreadState(7);
+        session.threads.set(7, secondary);
+
+        // EXPRESSION response routed to thread 7: the result name lookup happens
+        // against thread 7's evaluateResponses queue, not the main thread's.
+        secondary.evaluateResponses.push({
+            type: "response",
+            request_seq: 1,
+            success: true,
+            command: "evaluate",
+            seq: 0,
+            body: { result: "nLocal", variablesReference: 0 },
+        });
+        session.processInput("EXPRESSION:1:N:42\r\n", secondary);
+
+        // main thread's queue stays untouched
+        expect(session.mainThread.evaluateResponses).toHaveLength(0);
+        // and thread 7's queue is now drained
+        expect(secondary.evaluateResponses).toHaveLength(0);
+    });
+
+    it("acceptThreadSocket first call: binds main thread, sends InitializedEvent, no ThreadEvent", () => {
+        const { session, events } = makeSession();
+        const fakeSocket = new FakeSocket();
+        const fakeServer = {} as unknown as import("net").Server;
+
+        (session as unknown as {
+            acceptThreadSocket: (s: unknown, srv: unknown) => void;
+        }).acceptThreadSocket(fakeSocket, fakeServer);
+
+        expect(session.mainThread.socket).toBe(fakeSocket);
+        expect(findEvent(events, "initialized")).toBeDefined();
+        expect(findEvent(events, "thread")).toBeUndefined();
+        expect(session.threads.size).toBe(1);
+    });
+
+    it("acceptThreadSocket second call: creates a new ThreadState and emits ThreadEvent('started')", () => {
+        const { session, events } = makeSession();
+        const first = new FakeSocket();
+        const second = new FakeSocket();
+        const fakeServer = {} as unknown as import("net").Server;
+        const accept = (session as unknown as {
+            acceptThreadSocket: (s: unknown, srv: unknown) => void;
+        }).acceptThreadSocket.bind(session);
+
+        accept(first, fakeServer);
+        accept(second, fakeServer);
+
+        expect(session.threads.size).toBe(2);
+        const startedEvents = findAllEvents<DebugProtocol.ThreadEvent>(events, "thread");
+        expect(startedEvents).toHaveLength(1);
+        expect(startedEvents[0].body.reason).toBe("started");
+        const newId = startedEvents[0].body.threadId;
+        expect(newId).not.toBe(MAIN_THREAD_ID);
+        expect(session.threads.get(newId)).toBeDefined();
+        expect(session.threads.get(newId)!.socket).toBe(second);
+    });
+
+    it("close on a secondary socket emits ThreadEvent('exited') and removes the ThreadState", () => {
+        const { session, events } = makeSession();
+        const first = new FakeSocket();
+        const second = new FakeSocket();
+        const fakeServer = {} as unknown as import("net").Server;
+        const accept = (session as unknown as {
+            acceptThreadSocket: (s: unknown, srv: unknown) => void;
+        }).acceptThreadSocket.bind(session);
+
+        accept(first, fakeServer);
+        accept(second, fakeServer);
+        const startedEvents = findAllEvents<DebugProtocol.ThreadEvent>(events, "thread");
+        const newId = startedEvents[0].body.threadId;
+
+        // Simulate the secondary socket closing
+        second.emit("close");
+
+        const threadEvts = findAllEvents<DebugProtocol.ThreadEvent>(events, "thread");
+        expect(threadEvts).toHaveLength(2);
+        expect(threadEvts[1].body.reason).toBe("exited");
+        expect(threadEvts[1].body.threadId).toBe(newId);
+        expect(session.threads.has(newId)).toBe(false);
+        expect(session.threads.size).toBe(1);
+    });
+
+    it("close on the main socket does NOT emit ThreadEvent('exited') or remove the entry", () => {
+        const { session, events } = makeSession();
+        const first = new FakeSocket();
+        const fakeServer = {} as unknown as import("net").Server;
+        (session as unknown as {
+            acceptThreadSocket: (s: unknown, srv: unknown) => void;
+        }).acceptThreadSocket(first, fakeServer);
+
+        first.emit("close");
+
+        expect(findEvent(events, "thread")).toBeUndefined();
+        expect(session.threads.has(MAIN_THREAD_ID)).toBe(true);
+        // socket is cleared so command() will buffer into queue again
+        expect(session.mainThread.socket).toBeNull();
+    });
+
+    it("threadsRequest enumerates every live thread with its assigned name", () => {
+        const { session, responses } = makeSession();
+        const first = new FakeSocket();
+        const second = new FakeSocket();
+        const fakeServer = {} as unknown as import("net").Server;
+        const accept = (session as unknown as {
+            acceptThreadSocket: (s: unknown, srv: unknown) => void;
+        }).acceptThreadSocket.bind(session);
+
+        accept(first, fakeServer);
+        accept(second, fakeServer);
+
+        const response: DebugProtocol.ThreadsResponse = {
+            type: "response", request_seq: 1, success: true,
+            command: "threads", seq: 0, body: { threads: [] },
+        };
+        (session as unknown as {
+            threadsRequest: (r: DebugProtocol.ThreadsResponse) => void;
+        }).threadsRequest(response);
+
+        const threads = (responses[0].body as { threads: DebugProtocol.Thread[] }).threads;
+        expect(threads).toHaveLength(2);
+        expect(threads[0].id).toBe(MAIN_THREAD_ID);
+        expect(threads[0].name).toBe("Main Thread");
+        expect(threads[1].name).toMatch(/^Thread \d+$/);
     });
 });
 

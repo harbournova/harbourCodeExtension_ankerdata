@@ -122,46 +122,59 @@ export class harbourDebugSession extends debugadapter.DebugSession {
     /** Live harbour threads, keyed by harbour thread id. Bootstraps with the main thread. */
     threads: Map<number, ThreadState> = new Map([[MAIN_THREAD_ID, new ThreadState(MAIN_THREAD_ID)]]);
 
+    /** Allocator for non-main thread ids (assigned as new harbour threads connect). */
+    private nextThreadId: number = MAIN_THREAD_ID + 1;
+
+    /**
+     * Active thread for the in-flight socket dispatch. processInput(buff, thread) sets
+     * this for the duration of the call so the shim accessors below (and every method
+     * still using `this.<perThreadField>`) route to the right ThreadState. DAP request
+     * handlers (stackTraceRequest, evaluateRequest, …) will set this from args.threadId
+     * once Phase 3 lands; until then they operate on the main thread by default.
+     */
+    currentThread: ThreadState = this.threads.get(MAIN_THREAD_ID)!;
+
     constructor() {
         super();
     }
 
-    /** Currently every dispatcher operates on the main thread. Phase 2 will replace
-     *  these accessors with per-request lookups by args.threadId / variablesReference. */
     get mainThread(): ThreadState {
         return this.threads.get(MAIN_THREAD_ID)!;
     }
 
     // --- backwards-compat shims so the dispatcher code and existing tests can
-    //     keep using session.<field>; each accessor proxies to the main thread.
-    get socket(): net.Socket | null { return this.mainThread.socket; }
-    set socket(v: net.Socket | null) { this.mainThread.socket = v; }
-    get justStart(): boolean { return this.mainThread.justStart; }
-    set justStart(v: boolean) { this.mainThread.justStart = v; }
-    get queue(): string { return this.mainThread.queue; }
-    set queue(v: string) { this.mainThread.queue = v; }
-    get processLine(): ((line: string) => void) | undefined { return this.mainThread.processLine; }
-    set processLine(v: ((line: string) => void) | undefined) { this.mainThread.processLine = v; }
-    get variables(): HBVar[] { return this.mainThread.variables; }
-    set variables(v: HBVar[]) { this.mainThread.variables = v; }
-    get variablesMap(): Map<string, number> { return this.mainThread.variablesMap; }
-    set variablesMap(v: Map<string, number>) { this.mainThread.variablesMap = v; }
-    get stack(): DebugProtocol.StackTraceResponse[] { return this.mainThread.stack; }
-    set stack(v: DebugProtocol.StackTraceResponse[]) { this.mainThread.stack = v; }
-    get stackArgs(): DebugProtocol.StackTraceArguments[] { return this.mainThread.stackArgs; }
-    set stackArgs(v: DebugProtocol.StackTraceArguments[]) { this.mainThread.stackArgs = v; }
-    get evaluateResponses(): DebugProtocol.EvaluateResponse[] { return this.mainThread.evaluateResponses; }
-    set evaluateResponses(v: DebugProtocol.EvaluateResponse[]) { this.mainThread.evaluateResponses = v; }
-    get scopeResponses(): DebugProtocol.ScopesResponse[] { return this.mainThread.scopeResponses; }
-    set scopeResponses(v: DebugProtocol.ScopesResponse[]) { this.mainThread.scopeResponses = v; }
-    get completionsResponse(): DebugProtocol.CompletionsResponse | undefined { return this.mainThread.completionsResponse; }
-    set completionsResponse(v: DebugProtocol.CompletionsResponse | undefined) { this.mainThread.completionsResponse = v; }
-    get areasInfos(): string[][] { return this.mainThread.areasInfos; }
-    set areasInfos(v: string[][]) { this.mainThread.areasInfos = v; }
-    get currentStack(): number { return this.mainThread.currentStack; }
-    set currentStack(v: number) { this.mainThread.currentStack = v; }
+    //     keep using session.<field>; each accessor proxies to currentThread,
+    //     which processInput switches per-socket dispatch.
+    get socket(): net.Socket | null { return this.currentThread.socket; }
+    set socket(v: net.Socket | null) { this.currentThread.socket = v; }
+    get justStart(): boolean { return this.currentThread.justStart; }
+    set justStart(v: boolean) { this.currentThread.justStart = v; }
+    get queue(): string { return this.currentThread.queue; }
+    set queue(v: string) { this.currentThread.queue = v; }
+    get processLine(): ((line: string) => void) | undefined { return this.currentThread.processLine; }
+    set processLine(v: ((line: string) => void) | undefined) { this.currentThread.processLine = v; }
+    get variables(): HBVar[] { return this.currentThread.variables; }
+    set variables(v: HBVar[]) { this.currentThread.variables = v; }
+    get variablesMap(): Map<string, number> { return this.currentThread.variablesMap; }
+    set variablesMap(v: Map<string, number>) { this.currentThread.variablesMap = v; }
+    get stack(): DebugProtocol.StackTraceResponse[] { return this.currentThread.stack; }
+    set stack(v: DebugProtocol.StackTraceResponse[]) { this.currentThread.stack = v; }
+    get stackArgs(): DebugProtocol.StackTraceArguments[] { return this.currentThread.stackArgs; }
+    set stackArgs(v: DebugProtocol.StackTraceArguments[]) { this.currentThread.stackArgs = v; }
+    get evaluateResponses(): DebugProtocol.EvaluateResponse[] { return this.currentThread.evaluateResponses; }
+    set evaluateResponses(v: DebugProtocol.EvaluateResponse[]) { this.currentThread.evaluateResponses = v; }
+    get scopeResponses(): DebugProtocol.ScopesResponse[] { return this.currentThread.scopeResponses; }
+    set scopeResponses(v: DebugProtocol.ScopesResponse[]) { this.currentThread.scopeResponses = v; }
+    get completionsResponse(): DebugProtocol.CompletionsResponse | undefined { return this.currentThread.completionsResponse; }
+    set completionsResponse(v: DebugProtocol.CompletionsResponse | undefined) { this.currentThread.completionsResponse = v; }
+    get areasInfos(): string[][] { return this.currentThread.areasInfos; }
+    set areasInfos(v: string[][]) { this.currentThread.areasInfos = v; }
+    get currentStack(): number { return this.currentThread.currentStack; }
+    set currentStack(v: number) { this.currentThread.currentStack = v; }
 
-    processInput(buff: string): void {
+    processInput(buff: string, thread: ThreadState = this.mainThread): void {
+        const prevThread = this.currentThread;
+        this.currentThread = thread;
         try {
             const lines = buff.split("\r\n");
             for (let i = 0; i < lines.length; i++) {
@@ -173,10 +186,10 @@ export class harbourDebugSession extends debugadapter.DebugSession {
                         continue;
                     }
                     if (line.startsWith("STOP")) {
-                        this.sendEvent(new debugadapter.StoppedEvent(line.substring(5), 1));
+                        this.sendEvent(new debugadapter.StoppedEvent(line.substring(5), thread.id));
                         this.sendEvent({
                             event: "invalidated",
-                            body: { areas: ["variables", "stacks"], threadId: 1 },
+                            body: { areas: ["variables", "stacks"], threadId: thread.id },
                             seq: 0,
                             type: "event",
                         } as DebugProtocol.Event);
@@ -191,7 +204,7 @@ export class harbourDebugSession extends debugadapter.DebugSession {
                         continue;
                     }
                     if (line.startsWith("ERROR") && !line.startsWith("ERROR_VAR")) {
-                        const stopEvt = new debugadapter.StoppedEvent("error", 1, line.substring(6));
+                        const stopEvt = new debugadapter.StoppedEvent("error", thread.id, line.substring(6));
                         this.sendEvent(stopEvt);
                         continue;
                     }
@@ -245,6 +258,8 @@ export class harbourDebugSession extends debugadapter.DebugSession {
                     "stderr"
                 )
             );
+        } finally {
+            this.currentThread = prevThread;
         }
     }
 
@@ -277,7 +292,7 @@ export class harbourDebugSession extends debugadapter.DebugSession {
     ): void {
         if (this.startGo) {
             this.command("GO\r\n");
-            this.sendEvent(new debugadapter.ContinuedEvent(1, true));
+            this.sendEvent(new debugadapter.ContinuedEvent(this.mainThread.id, true));
         }
         this.sendResponse(response);
     }
@@ -456,12 +471,13 @@ export class harbourDebugSession extends debugadapter.DebugSession {
     evaluateClient(socket: net.Socket, server: net.Server, args: LaunchArgs | AttachArgs): void {
         const tc = this;
 
+        // Per-socket handshake handler. The handshake is exactly two CRLF-terminated
+        // lines: <exeName>\r\n<pid>\r\n. After the handshake validates, the socket
+        // is bound to a ThreadState and its data handler is swapped to processInput.
+        // Each new connection gets its own ThreadState; the first connection becomes
+        // the main thread, subsequent connections emit ThreadEvent('started').
         socket.on("data", (data) => {
             try {
-                if (tc.socket === socket) {
-                    tc.processInput(data.toString());
-                    return;
-                }
                 const lines = data.toString().split("\r\n");
                 if (lines.length < 2) {
                     socket.write("NO\r\n");
@@ -499,50 +515,83 @@ export class harbourDebugSession extends debugadapter.DebugSession {
 
                 socket.write("HELLO\r\n");
                 tc.setProcess(processId);
-                tc.sendEvent(new debugadapter.InitializedEvent());
-                server.close();
-                tc.socket = socket;
-                socket.removeAllListeners("data");
-                socket.on("data", (data2) => {
-                    try {
-                        tc.processInput(data2.toString());
-                    } catch (error) {
-                        tc.sendEvent(
-                            new debugadapter.OutputEvent(
-                                `Error processing socket data: ${(error as Error).message}\r\n`,
-                                "stderr"
-                            )
-                        );
-                    }
-                });
-                socket.on("error", (error) => {
-                    tc.sendEvent(
-                        new debugadapter.OutputEvent(
-                            `Socket error: ${error.message}\r\n`,
-                            "stderr"
-                        )
-                    );
-                });
-                socket.on("close", () => {
-                    tc.socket = null;
-                });
-                try {
-                    socket.write(tc.queue);
-                } catch (error) {
-                    tc.sendEvent(
-                        new debugadapter.OutputEvent(
-                            `Error writing to socket: ${(error as Error).message}\r\n`,
-                            "stderr"
-                        )
-                    );
-                }
-                this.justStart = false;
-                tc.queue = "";
+                tc.acceptThreadSocket(socket, server);
             } catch (_ex) {
                 socket.write("NO\r\n");
                 socket.end();
             }
         });
+    }
+
+    /**
+     * Bind an authenticated socket to a ThreadState. The first connection becomes
+     * the main thread (id 1) and triggers InitializedEvent for VS Code; subsequent
+     * connections are additional Harbour threads and emit ThreadEvent('started').
+     * Socket close emits ThreadEvent('exited') for non-main threads.
+     */
+    private acceptThreadSocket(socket: net.Socket, server: net.Server): void {
+        const tc = this;
+        const isFirst = !this.mainThread.socket;
+        let thread: ThreadState;
+        if (isFirst) {
+            thread = this.mainThread;
+            thread.socket = socket;
+            this.sendEvent(new debugadapter.InitializedEvent());
+            // Once the main thread is in, the listener can stop accepting *new* sockets
+            // in single-thread builds. For MT, additional Harbour threads need the
+            // listener open — so we leave it open and rely on disconnectRequest /
+            // terminateRequest to tear it down.
+            void server;
+        } else {
+            const tid = this.nextThreadId++;
+            thread = new ThreadState(tid);
+            thread.socket = socket;
+            this.threads.set(tid, thread);
+            this.sendEvent(new debugadapter.ThreadEvent("started", tid));
+        }
+
+        socket.removeAllListeners("data");
+        socket.on("data", (data2) => {
+            try {
+                tc.processInput(data2.toString(), thread);
+            } catch (error) {
+                tc.sendEvent(
+                    new debugadapter.OutputEvent(
+                        `Error processing socket data: ${(error as Error).message}\r\n`,
+                        "stderr"
+                    )
+                );
+            }
+        });
+        socket.on("error", (error) => {
+            tc.sendEvent(
+                new debugadapter.OutputEvent(
+                    `Socket error (thread ${thread.id}): ${error.message}\r\n`,
+                    "stderr"
+                )
+            );
+        });
+        socket.on("close", () => {
+            thread.socket = null;
+            if (thread.id !== MAIN_THREAD_ID) {
+                tc.threads.delete(thread.id);
+                tc.sendEvent(new debugadapter.ThreadEvent("exited", thread.id));
+            }
+        });
+
+        // Drain any commands queued before the handshake completed.
+        try {
+            if (thread.queue.length > 0) socket.write(thread.queue);
+        } catch (error) {
+            tc.sendEvent(
+                new debugadapter.OutputEvent(
+                    `Error writing to socket: ${(error as Error).message}\r\n`,
+                    "stderr"
+                )
+            );
+        }
+        thread.justStart = false;
+        thread.queue = "";
     }
 
     command(cmd: string): void {
