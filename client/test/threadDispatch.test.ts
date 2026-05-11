@@ -355,6 +355,89 @@ describe("ThreadState routing — phase 2 (multi-socket)", () => {
     });
 });
 
+/**
+ * End-to-end integration tests: two simulated Harbour threads connect via the
+ * handshake path, then emit STOP / STACK from each socket. Verifies that the
+ * full pipeline (accept -> processInput -> StoppedEvent + ThreadEvent + state)
+ * routes correctly with no cross-talk.
+ */
+describe("Multi-thread end-to-end", () => {
+    it("two threads handshake, stop independently, and each StoppedEvent carries its own threadId", () => {
+        const { session, events } = makeSession();
+        session.processId = 4242; // pretend we already know the pid
+        const fakeServer = {} as unknown as import("net").Server;
+
+        // First thread handshake: matching pid -> bound to main thread
+        const sockA = new FakeSocket();
+        session.evaluateClient(sockA as unknown as import("net").Socket, fakeServer, { program: undefined } as any);
+        sockA.emit("data", Buffer.from("MyApp\r\n4242\r\n"));
+        expect(sockA.written).toContain("HELLO\r\n");
+        expect(findEvent(events, "initialized")).toBeDefined();
+        expect(session.mainThread.socket).toBe(sockA);
+
+        // Second thread handshake: same pid -> bound to a new ThreadState, ThreadEvent('started')
+        const sockB = new FakeSocket();
+        session.evaluateClient(sockB as unknown as import("net").Socket, fakeServer, { program: undefined } as any);
+        sockB.emit("data", Buffer.from("MyApp\r\n4242\r\n"));
+        expect(sockB.written).toContain("HELLO\r\n");
+        const startedEvts = findAllEvents<DebugProtocol.ThreadEvent>(events, "thread");
+        expect(startedEvts).toHaveLength(1);
+        expect(startedEvts[0].body.reason).toBe("started");
+        const tidB = startedEvts[0].body.threadId;
+        const threadB = session.threads.get(tidB)!;
+        expect(threadB.socket).toBe(sockB);
+
+        // Thread B hits a breakpoint
+        sockB.emit("data", Buffer.from("STOP:break\r\n"));
+        const stops = findAllEvents<DebugProtocol.StoppedEvent>(events, "stopped");
+        expect(stops).toHaveLength(1);
+        expect(stops[0].body.threadId).toBe(tidB);
+        expect(stops[0].body.reason).toBe("break");
+
+        // Thread A hits a different stop
+        sockA.emit("data", Buffer.from("STOP:step\r\n"));
+        const stopsNow = findAllEvents<DebugProtocol.StoppedEvent>(events, "stopped");
+        expect(stopsNow).toHaveLength(2);
+        expect(stopsNow[1].body.threadId).toBe(MAIN_THREAD_ID);
+        expect(stopsNow[1].body.reason).toBe("step");
+    });
+
+    it("third-pid handshake is rejected after the session locks onto the first pid", () => {
+        const { session } = makeSession();
+        session.processId = 4242;
+        const fakeServer = {} as unknown as import("net").Server;
+
+        const intruder = new FakeSocket();
+        session.evaluateClient(intruder as unknown as import("net").Socket, fakeServer, { program: undefined } as any);
+        intruder.emit("data", Buffer.from("MyApp\r\n9999\r\n"));
+
+        expect(intruder.written).toContain("NO\r\n");
+        expect(intruder.destroyed).toBe(true);
+        expect(session.threads.size).toBe(1); // still only main
+    });
+
+    it("close on a secondary socket fires ThreadEvent('exited') and reduces the live thread count", () => {
+        const { session, events } = makeSession();
+        session.processId = 4242;
+        const fakeServer = {} as unknown as import("net").Server;
+        const sockA = new FakeSocket();
+        const sockB = new FakeSocket();
+        session.evaluateClient(sockA as unknown as import("net").Socket, fakeServer, { program: undefined } as any);
+        sockA.emit("data", Buffer.from("MyApp\r\n4242\r\n"));
+        session.evaluateClient(sockB as unknown as import("net").Socket, fakeServer, { program: undefined } as any);
+        sockB.emit("data", Buffer.from("MyApp\r\n4242\r\n"));
+        const tidB = (findEvent<DebugProtocol.ThreadEvent>(events, "thread"))!.body.threadId;
+
+        sockB.emit("close");
+
+        const allThread = findAllEvents<DebugProtocol.ThreadEvent>(events, "thread");
+        expect(allThread).toHaveLength(2);
+        expect(allThread[1].body.reason).toBe("exited");
+        expect(allThread[1].body.threadId).toBe(tidB);
+        expect(session.threads.has(tidB)).toBe(false);
+    });
+});
+
 describe("Phase 3: per-thread control requests", () => {
     function attachTwoThreads(): {
         session: harbourDebugSession;
