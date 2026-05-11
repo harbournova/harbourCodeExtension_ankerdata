@@ -41,6 +41,7 @@
         "prelaunch": "node build.js --dev",
         "webpack2": "node build.js",
         "typecheck": "tsc --noEmit",
+        "test": "jest",
         "package": "vsce package --out ../harbour-extension.vsix"
     },
     "contributes": {
@@ -560,10 +561,13 @@
         ]
     },
     "devDependencies": {
+        "@types/jest": "^29.5.12",
         "@types/node": "^18.8.4",
         "@types/vscode": "^1.40.0",
         "@vscode/vsce": "^3.9.1",
         "esbuild": "^0.24.0",
+        "jest": "^29.7.0",
+        "ts-jest": "^29.1.5",
         "typescript": "^6.0.3"
     }
 }
