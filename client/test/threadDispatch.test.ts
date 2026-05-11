@@ -355,6 +355,104 @@ describe("ThreadState routing — phase 2 (multi-socket)", () => {
     });
 });
 
+describe("Phase 3: per-thread control requests", () => {
+    function attachTwoThreads(): {
+        session: harbourDebugSession;
+        events: CapturedEvent[];
+        main: { thread: ThreadState; socket: FakeSocket };
+        secondary: { thread: ThreadState; socket: FakeSocket };
+    } {
+        const { session, events } = makeSession();
+        const fakeServer = {} as unknown as import("net").Server;
+        const accept = (session as unknown as {
+            acceptThreadSocket: (s: unknown, srv: unknown) => void;
+        }).acceptThreadSocket.bind(session);
+
+        const firstSocket = new FakeSocket();
+        accept(firstSocket, fakeServer);
+        const mainThread = session.mainThread;
+        // justStart=false after accept so commandTo writes directly to the socket
+        // rather than buffering in queue.
+        expect(mainThread.justStart).toBe(false);
+
+        const secondSocket = new FakeSocket();
+        accept(secondSocket, fakeServer);
+        const startedEvents = events.filter((e) => e.event === "thread") as DebugProtocol.ThreadEvent[];
+        const secId = startedEvents[0].body.threadId;
+        const secondary = session.threads.get(secId)!;
+
+        return {
+            session,
+            events,
+            main: { thread: mainThread, socket: firstSocket },
+            secondary: { thread: secondary, socket: secondSocket },
+        };
+    }
+
+    it("continueRequest with args.threadId writes GO to that thread's socket only", () => {
+        const { session, main, secondary } = attachTwoThreads();
+        const resp: DebugProtocol.ContinueResponse = {
+            type: "response", request_seq: 1, success: true,
+            command: "continue", seq: 0, body: { allThreadsContinued: false },
+        };
+        (session as unknown as {
+            continueRequest: (
+                r: DebugProtocol.ContinueResponse,
+                a: DebugProtocol.ContinueArguments
+            ) => void;
+        }).continueRequest(resp, { threadId: secondary.thread.id });
+
+        expect(secondary.socket.written).toContain("GO\r\n");
+        expect(main.socket.written).not.toContain("GO\r\n");
+    });
+
+    it("nextRequest / stepInRequest / stepOutRequest / pauseRequest each route by args.threadId", () => {
+        const { session, main, secondary } = attachTwoThreads();
+        const call = (method: string, cmd: string, opts: { threadId: number }) => {
+            const resp = {
+                type: "response", request_seq: 1, success: true,
+                command: method, seq: 0,
+            } as DebugProtocol.Response;
+            (session as unknown as Record<string, Function>)[method](resp, opts);
+            return cmd;
+        };
+
+        call("nextRequest", "NEXT\r\n", { threadId: secondary.thread.id });
+        call("stepInRequest", "STEP\r\n", { threadId: secondary.thread.id });
+        call("stepOutRequest", "EXIT\r\n", { threadId: main.thread.id });
+        call("pauseRequest", "PAUSE\r\n", { threadId: main.thread.id });
+
+        expect(secondary.socket.written).toEqual(["NEXT\r\n", "STEP\r\n"]);
+        expect(main.socket.written).toEqual(["EXIT\r\n", "PAUSE\r\n"]);
+    });
+
+    it("stackTraceRequest with args.threadId enqueues the stack response on the right thread and writes STACK to that socket", () => {
+        const { session, main, secondary } = attachTwoThreads();
+        const resp: DebugProtocol.StackTraceResponse = {
+            type: "response", request_seq: 1, success: true,
+            command: "stackTrace", seq: 0, body: { stackFrames: [] },
+        };
+        (session as unknown as {
+            stackTraceRequest: (
+                r: DebugProtocol.StackTraceResponse,
+                a: DebugProtocol.StackTraceArguments
+            ) => void;
+        }).stackTraceRequest(resp, { threadId: secondary.thread.id });
+
+        expect(secondary.thread.stack).toHaveLength(1);
+        expect(main.thread.stack).toHaveLength(0);
+        expect(secondary.socket.written).toContain("STACK\r\n");
+        expect(main.socket.written).not.toContain("STACK\r\n");
+    });
+
+    it("selectThread falls back to mainThread when args.threadId is missing or unknown", () => {
+        const { session } = makeSession();
+        expect(session.selectThread(undefined)).toBe(session.mainThread);
+        expect(session.selectThread(9999)).toBe(session.mainThread);
+        expect(session.selectThread(MAIN_THREAD_ID)).toBe(session.mainThread);
+    });
+});
+
 describe("ThreadState extraction (phase 1 refactor)", () => {
     it("bootstraps with one ThreadState for the main thread", () => {
         const { session } = makeSession();

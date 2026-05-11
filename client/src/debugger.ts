@@ -594,12 +594,26 @@ export class harbourDebugSession extends debugadapter.DebugSession {
         thread.queue = "";
     }
 
+    /** Look up the ThreadState for a DAP-supplied threadId; fall back to the main
+     *  thread when threadId is missing or unknown (single-thread programs hit this). */
+    selectThread(threadId?: number): ThreadState {
+        if (threadId !== undefined) {
+            const t = this.threads.get(threadId);
+            if (t) return t;
+        }
+        return this.mainThread;
+    }
+
     command(cmd: string): void {
-        if (this.justStart) {
-            this.queue += cmd;
-        } else if (this.socket && !this.socket.destroyed) {
+        this.commandTo(this.currentThread, cmd);
+    }
+
+    commandTo(thread: ThreadState, cmd: string): void {
+        if (thread.justStart) {
+            thread.queue += cmd;
+        } else if (thread.socket && !thread.socket.destroyed) {
             try {
-                this.socket.write(cmd);
+                thread.socket.write(cmd);
             } catch (error) {
                 this.sendEvent(
                     new debugadapter.OutputEvent(
@@ -616,13 +630,14 @@ export class harbourDebugSession extends debugadapter.DebugSession {
         response: DebugProtocol.StackTraceResponse,
         args: DebugProtocol.StackTraceArguments
     ): void {
-        if (this.stack.length === 0) {
-            this.variables = [];
-            this.variablesMap.clear();
-            this.command("STACK\r\n");
+        const thread = this.selectThread(args.threadId);
+        if (thread.stack.length === 0) {
+            thread.variables = [];
+            thread.variablesMap.clear();
+            this.commandTo(thread, "STACK\r\n");
         }
-        this.stack.push(response);
-        this.stackArgs.push(args);
+        thread.stack.push(response);
+        thread.stackArgs.push(args);
     }
 
     protected threadsRequest(response: DebugProtocol.ThreadsResponse): void {
@@ -940,37 +955,42 @@ export class harbourDebugSession extends debugadapter.DebugSession {
     /// PROGRAM FLOW
     protected continueRequest(
         response: DebugProtocol.ContinueResponse,
-        _args: DebugProtocol.ContinueArguments
+        args: DebugProtocol.ContinueArguments
     ): void {
-        this.command("GO\r\n");
+        const thread = this.selectThread(args.threadId);
+        this.commandTo(thread, "GO\r\n");
         this.sendResponse(response);
     }
     protected nextRequest(
         response: DebugProtocol.NextResponse,
-        _args: DebugProtocol.NextArguments
+        args: DebugProtocol.NextArguments
     ): void {
-        this.command("NEXT\r\n");
+        const thread = this.selectThread(args.threadId);
+        this.commandTo(thread, "NEXT\r\n");
         this.sendResponse(response);
     }
     protected stepInRequest(
         response: DebugProtocol.StepInResponse,
-        _args: DebugProtocol.StepInArguments
+        args: DebugProtocol.StepInArguments
     ): void {
-        this.command("STEP\r\n");
+        const thread = this.selectThread(args.threadId);
+        this.commandTo(thread, "STEP\r\n");
         this.sendResponse(response);
     }
     protected stepOutRequest(
         response: DebugProtocol.StepOutResponse,
-        _args: DebugProtocol.StepOutArguments
+        args: DebugProtocol.StepOutArguments
     ): void {
-        this.command("EXIT\r\n");
+        const thread = this.selectThread(args.threadId);
+        this.commandTo(thread, "EXIT\r\n");
         this.sendResponse(response);
     }
     protected pauseRequest(
         response: DebugProtocol.PauseResponse,
-        _args: DebugProtocol.PauseArguments
+        args: DebugProtocol.PauseArguments
     ): void {
-        this.command("PAUSE\r\n");
+        const thread = this.selectThread(args.threadId);
+        this.commandTo(thread, "PAUSE\r\n");
         this.sendResponse(response);
     }
 
