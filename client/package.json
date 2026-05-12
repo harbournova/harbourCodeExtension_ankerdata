@@ -13,7 +13,8 @@
     "onLanguage:harbour",
     "onCommand:harbour.getdbgcode",
     "onCommand:harbour.setupCodeFormat",
-    "workspaceContains:**/*.prg"
+    "workspaceContains:**/*.prg",
+    "onDebugResolve:harbour-dbg"
   ],
   "engines": {
     "vscode": "^1.40.0"
