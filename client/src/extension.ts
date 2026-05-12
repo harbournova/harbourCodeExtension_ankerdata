@@ -14,6 +14,7 @@ import * as decorator from "./decorator";
 import * as docCreator from "./docCreator";
 import * as taskProvider from "./taskProvider";
 import * as formatEditor from "./formatEditor";
+import * as debugProvider from "./debugProvider";
 
 export function activate(context: vscode.ExtensionContext): void {
   vscode.languages.setLanguageConfiguration("harbour", {
@@ -51,6 +52,8 @@ export function activate(context: vscode.ExtensionContext): void {
   cl.registerProposedFeatures();
   cl.start();
   context.subscriptions.push(cl);
+
+  debugProvider.activate(context);
 
   vscode.commands.registerCommand("harbour.getDbgCode", () => {
     getDbgCode(context);
